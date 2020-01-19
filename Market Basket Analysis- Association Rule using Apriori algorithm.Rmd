@@ -1,0 +1,294 @@
+
+Title: 'Market Basket Analysis - Association Rule using Apriori Algorithm'
+author: "Kaycee"
+date: "10/9/2019"
+output: html_document
+---
+
+```{r}
+library(RMySQL)
+
+#Import df 'line_item'
+
+# Settings
+
+db_user <- 'data_student_berlin'
+
+db_password <- 'waai_has_shitty_internet'
+
+db_name <- 'pricehub'
+
+db_table <- 'line_item'
+
+db_host <- '34.89.228.59' # for local access
+
+db_port <- 3306
+
+# Read data from db
+
+mydb <-  dbConnect(MySQL(), user = db_user, password = db_password,
+                   
+                   dbname = db_name, host = db_host, port = db_port)
+
+s <- paste0("select * from ", db_table)
+
+rs <- dbSendQuery(mydb, s)
+
+line_item <-  fetch(rs, n = -1)
+
+##Import df 'orders'
+#  Settings
+
+db_table <- 'orders'
+
+#  Read data from db
+
+s <- paste0("select * from ", db_table)
+
+rs <- dbSendQuery(mydb, s)
+
+orders <-  fetch(rs, n = -1)
+
+#Import df 'products'
+
+db_table <- 'products'
+
+#Read data from db
+
+s <- paste0("select * from ", db_table)
+
+rs <- dbSendQuery(mydb, s)
+
+products <-  fetch(rs, n = -1)
+
+on.exit(dbDisconnect(mydb))
+```
+Library Loading.
+```{r}
+#library(RMySQL)
+#library(dplyr)
+#library(ggplot2)
+#library(arules)
+#library(skimr)
+#library(mbar)
+#library(plyr)
+#library(arulesViz)
+```
+#EDA
+```{r}
+head(line_item)
+head(orders)
+head(products)
+```
+#Check that all orders in line_item are present in our orders dataset
+```{r}
+library(dplyr)
+New_line_item <- inner_join(line_item, orders, by = "id_order")
+head(New_line_item)
+glimpse(New_line_item)
+```
+## Creating a new column called totalQuantitypaid (unit_price*product_quanity)
+```{r}
+New_line_item <- New_line_item %>% 
+  mutate(PQ_price = unit_price * product_quantity) 
+head(New_line_item)
+```
+## Grouping and summarising using id_order $ total_paid
+```{r}
+Sum_Total_Paid <-New_line_item %>% 
+  group_by(id_order) %>% 
+  summarise(total_paid_li = sum(PQ_price))
+head(Sum_Total_Paid)
+```
+## Joining orders, New_line_sum and grouping by "id_order"
+```{r}
+Final<- inner_join(orders, Sum_Total_Paid, by = "id_order")
+dim(Final)
+```
+## Relationship without Prices in Order and lineitems using GGPLOT
+```{r}
+library(ggplot2)
+ggplot(data=Final, aes(total_paid_li, total_paid)) + 
+  geom_point(aes(col="pink", fill= '.count..')) 
+
+qplot(Final$total_paid_li, geom = "histogram", binwidth = 50, 
+      main = "Histogram of Total price of Line Item", xlab = "Total Line Item price Paid", 
+      fill = ..count.., xlim=c(0,3000)) + scale_fill_gradient("Count", low = "green", high = "red")
+```
+## Exclude from line_item any rows from orders that are not “Completed
+```{r}
+New_line_item_completed <- filter(Final, state == "Completed")
+
+completedstate <- New_line_item %>% select(state) %>% filter(state =="Completed")
+head(completedstate)
+
+CancelledState <-Final %>% select(state) %>% filter(state =="Cancelled")
+
+head(CancelledState)
+```
+# Exclude from line_item any rows that do not meet that condition.
+```{r}
+Excluded_row <- nrow(line_item) - nrow(New_line_item)
+
+head(Excluded_row)
+```
+## Explore the relationship between prices in line_item and product
+```{r}
+
+#EDA 
+tbl_df(products)
+data.frame(products)
+dim(products)
+
+# Checking that all sku in New_line_item and products dataset. 
+Product_line_item<- inner_join(New_line_item, products, by = "sku")
+
+head(Product_line_item)
+
+## Creating a column Called PQ_Paid in line_item of products
+Product_line_item <- Product_line_item %>% 
+  mutate(Paid_PQ = unit_price*product_quantity)
+
+
+## Exporing relationship between the prices of line_item and products using ggplot
+
+Product_line_item %>% ggplot(aes(total_paid, Paid_PQ)) +  geom_point()
+
+Product_line_item %>% ggplot(aes(total_paid, price, col= "unit_price" , size=1)) +  
+  geom_point() +  theme_bw()
+```
+
+```{r}
+# CLEANING AND PREPROCESSING MY FINAL DATAFRAME 
+Final_data<- select(Product_line_item, sku, name_en, short_desc_en, price, brand, 
+                    manual_categories,total_paid, Paid_PQ, 
+                    product_quantity, unit_price,
+                    id_order)
+glimpse(Final_data)
+
+```
+# REMOVING OUTLIERS FROM OUR PRICE DATASET
+```{r}
+
+Outlier_Unit_price <- boxplot(Final_data$unit_price, plot = FALSE)$out
+
+Outlier_Paid_PQ <- boxplot(Final_data$Paid_PQ, plot = FALSE)$out
+
+Outlier_price <- boxplot(Final_data$price, plot = FALSE)$out
+
+Outlier_total_paid <- boxplot(Final_data$total_paid, plot = FALSE)$out
+
+
+Final_data[which(Final_data$unit_price %in% 
+                   Outlier_Unit_price),]
+
+Final_data[which(Final_data$price %in% 
+                   Outlier_price),]
+
+
+Final_data[which(Final_data$total_paid %in% 
+                   Outlier_total_paid),]
+
+Final_data[which(Final_data$Paid_PQ %in% 
+                   Outlier_Paid_PQ),]
+
+# REMOVING PRICES OUTLIERS FROM THE DATASET
+
+Final_data <-Final_data[-which(Final_data$unit_price %in% Outlier_Unit_price),]
+
+Final_data <- Final_data[-which(Final_data$price %in% Outlier_price),]
+
+Final_data <- Final_data[-which(Final_data$total_paid %in% Outlier_total_paid),]
+
+Final_data <- Final_data[-which(Final_data$Paid_PQ %in% Outlier_Paid_PQ),]
+
+# CHECKING RELATIONSHIP BLW PRICES IN OUR DATASET 
+ggplot(Final_data, aes(total_paid, Paid_PQ, color= "blue")) + geom_point()
+```
+# CREATING A TRANSACTIONAL FILE
+```{r}
+Data <- select(Final_data,manual_categories,id_order)
+
+
+write.csv( Final_data, "Data.csv", row.names = FALSE)
+Sys.sleep(10)
+
+get_data <- read.transactions("Data.csv",
+                              format = "single", header= T,
+                              sep = ",",
+                              cols = c("id_order", "manual_categories"))
+
+# Summary of get_data 
+cat("Number of basket:", length(get_data))
+cat("Number of unique items:", sum(size(get_data)))
+
+summary(get_d1ata)
+
+inspect(get_data[1:10])
+
+length(get_data)
+
+size(get_data)
+
+head(itemLabels(get_data))
+
+# Summary of the number of support/frequency labels of items in the basket
+itemFrequency(get_data[,1:10])
+
+```
+## Visualization of items in the Dataset 
+```{r}
+itemFrequencyPlot(get_data, topN=10, type="relative",col= "pink",
+                  main = "Relative Item Frequency Plot")
+
+# Visualizing using support frequency.
+itemFrequencyPlot(get_data, support= 0.5)
+
+# Using Image() function to visualize
+
+image(get_data)
+```
+# APPLYING APRIORI ALGORITHM
+```{r}
+Data_rules <- apriori(get_data) 
+
+Data_rules <- apriori(get_data,parameter = list(minlen= 2, maxlen= 10,
+                                                sup = 0.00001, conf = 0.5))
+summary(Data_rules)
+inspect(Data_rules[1:10])
+
+# SORTING BY SUPPORT, CONF, AND LIFT
+
+Data_rules<- sort(Data_rules, by = "conf", decreasing = T) 
+
+inspect(Data_rules)
+
+#Finding duplicates in our Data_rules dataset 
+redundant_rules<- is.redundant(Data_rules)
+summary(redundant_rules)
+
+
+# Removing the duplicated rule in Data_ruless
+Data_rules <- Data_rules[!redundant_rules]
+summary(Data_rules)
+
+
+# Plot a graph of our Data_rules Dataset
+
+plot(Data_rules, method = "graph", interactive = T)
+
+plot(Data_rules, method = "grouped")
+
+plot(Data_rules, method="paracoord",  control=list(alpha=.5, reorder=TRUE))
+
+
+plot(Data_rules,measure=c("support","lift"), shading = "confidence",interactive=T) 
+
+# Changing default to RHS
+
+Data_rules_accessories <- apriori(get_data,parameter= list(support= .00005, conf =0.05),
+                                  appearance = list(default = 'rhs', lhs = "accessories"))
+
+inspect(Data_rules_accessories)
+```
+
